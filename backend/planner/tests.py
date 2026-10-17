@@ -1,6 +1,7 @@
 from unittest import mock
 
 import requests
+from django.core.cache import cache
 from django.test import SimpleTestCase
 
 from planner.clients import WeatherBusy, fetch_weather
@@ -78,7 +79,13 @@ class HeatmapInputTest(SimpleTestCase):
 
 
 class WeatherRetryTest(SimpleTestCase):
-    # fake open meteo answers, no network
+    # fake open meteo answers, no network. cache cleared so the "busy" pause doesn't leak
+
+    def setUp(self):
+        cache.clear()
+
+    def tearDown(self):
+        cache.clear()
 
     def answer(self, status):
         r = mock.Mock(ok=status == 200, status_code=status)
@@ -98,3 +105,28 @@ class WeatherRetryTest(SimpleTestCase):
         get.side_effect = [self.answer(503), self.answer(429), self.answer(503)]
         with self.assertRaises(WeatherBusy):
             fetch_weather({})
+
+    @mock.patch("planner.clients.time.sleep")
+    @mock.patch("planner.clients.requests.get")
+    def test_pauses_after_giving_up(self, get, sleep):
+        get.side_effect = [self.answer(503)] * 3
+        with self.assertRaises(WeatherBusy):
+            fetch_weather({})
+        # next request doesn't call open meteo at all
+        with self.assertRaises(WeatherBusy):
+            fetch_weather({})
+        self.assertEqual(get.call_count, 3)
+
+
+class RateLimitTest(SimpleTestCase):
+
+    def setUp(self):
+        cache.clear()
+
+    def tearDown(self):
+        cache.clear()
+
+    def test_plan_limit_per_minute(self):
+        codes = [self.client.post("/api/plan/", {}, content_type="application/json").status_code for _ in range(13)]
+        self.assertEqual(codes[:12], [400] * 12)  # bad body, but they still count
+        self.assertEqual(codes[12], 429)

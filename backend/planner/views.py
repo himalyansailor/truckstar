@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import requests
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -13,6 +14,28 @@ from .clients import WeatherBusy
 logger = logging.getLogger(__name__)
 
 BUSY_MESSAGE = "the weather service (Open-Meteo) is busy right now, try again in a minute"
+
+# requests per minute per IP. a new trip is 2 plan requests (quick + full) and 1 heatmap per
+# route looked at, so this is ~6 new trips a minute: plenty for a person, but one script or
+# someone clicking around can't use up the tomtom / open meteo quota for everyone
+LIMITS = {"plan": 12, "heatmap": 30, "places": 60}
+
+
+def over_limit(request, name):
+    # counted in the shared cache (redis when hosted), so it holds across instances.
+    # x-forwarded-for: vercel puts the real client ip first
+    ip = request.META.get("HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", "")).split(",")[0].strip()
+    key = "limit:" + name + ":" + ip + ":" + str(int(time.time() // 60))
+    cache.add(key, 0, 60)
+    try:
+        count = cache.incr(key)
+    except ValueError:  # expired between add and incr
+        count = 1
+    return count > LIMITS[name]
+
+
+def too_many():
+    return JsonResponse({"error": "too many requests, wait a minute and try again"}, status=429)
 
 
 def parse_time(s):
@@ -57,6 +80,8 @@ def parse_lines(lines):
 
 def places(request):
     # suggestions for the from / to fields
+    if over_limit(request, "places"):
+        return too_many()
     q = request.GET.get("q", "").strip()
     if len(q) < 2:
         return JsonResponse({"places": []})
@@ -72,6 +97,8 @@ def places(request):
 def plan(request):
     if request.method != "POST":
         return JsonResponse({"error": "use POST"}, status=405)
+    if over_limit(request, "plan"):
+        return too_many()
 
     try:
         body = json.loads(request.body)
@@ -119,6 +146,8 @@ def plan(request):
 def heatmap(request):
     if request.method != "POST":
         return JsonResponse({"error": "use POST"}, status=405)
+    if over_limit(request, "heatmap"):
+        return too_many()
 
     try:
         body = json.loads(request.body)

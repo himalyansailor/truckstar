@@ -309,20 +309,17 @@ def find_three_routes(a, b, weight, depart):
         except Exception:
             return None  # no road near the via point etc, just skip it
 
-    def job(j):
-        if j == "main":
-            return [add_timing(r) for r in clients.get_routes([a, b], weight, depart)[:3]]
-        return via_route(j)
+    routes = [add_timing(r) for r in clients.get_routes([a, b], weight, depart)[:3]]
 
-    # the main call with alternatives takes ~7 s (saw it in the traces) and the via routes
-    # often fail in the mountains, so ask for the main routes and all 4 via routes at the
-    # same time instead of one round after another. wastes some calls when tomtom already
-    # gives 3 routes, but they get cached
-    results = clients.in_parallel(job, ["main", [0.12, 90], [0.12, -90], [0.25, 90], [0.25, -90]])
-    routes = results[0]
-    backups = results[1:]
+    if len(routes) >= 3:
+        return routes
 
-    for r in backups:
+    # via routes only when tomtom's alternatives aren't enough (mostly mountains). they used
+    # to be sent with the main call every time: 6 tomtom calls per trip (quick + main + 4)
+    # when 2 were usually enough, more cost, and 6 at once hit tomtom's rate limit.
+    # all 4 at once when needed: 2 at a time saved 2 calls but made shimla -> leh 4 s slower
+    tries = [[0.12, 90], [0.12, -90], [0.25, 90], [0.25, -90]]
+    for r in clients.in_parallel(via_route, tries):
         if len(routes) >= 3:
             break
         if r is None or r["duration_s"] > routes[0]["duration_s"] * 1.5:

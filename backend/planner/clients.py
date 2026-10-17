@@ -25,6 +25,7 @@ HEADERS = {"User-Agent": "truck-weather-router (interview assignment)"}
 # cache api results for a while. same trip clicked twice (or the demo) doesn't hit the apis
 # again, and keeps us under open meteo's hourly limit. django's default cache = in memory
 CACHE_SECONDS = 30 * 60
+BUSY_PAUSE = 20  # seconds without open meteo calls after it failed 3 times in a row
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -177,7 +178,12 @@ def fetch_weather(params):
     # open meteo's free api fails now and then: 429 = our per-minute / per-day limit,
     # 502-504 = it's overloaded, or it's just very slow. wait a bit and try again, 3 tries.
     # worst case 15 + 1 + 15 + 3 + 15 = 49 s, so a plan (+ ~7 s tomtom) stays under
-    # vercel's 60 s function limit
+    # vercel's 60 s function limit.
+    # after 3 failures, nobody calls it for BUSY_PAUSE seconds (flag in the shared cache, so
+    # all instances see it): a struggling api doesn't get hammered by every user, and users
+    # get the "busy" answer at once instead of after 49 s
+    if cache.get("open-meteo-busy"):
+        raise WeatherBusy("open-meteo paused after recent failures")
     for wait in (1, 3, None):
         try:
             res = requests.get(WEATHER_URL, params=params, timeout=15)
@@ -189,6 +195,7 @@ def fetch_weather(params):
         except requests.Timeout:
             problem = "timed out"
         if wait is None:
+            cache.set("open-meteo-busy", True, BUSY_PAUSE)
             raise WeatherBusy("open-meteo " + problem + " 3 times")
         logger.warning("open-meteo %s, retrying in %ds", problem, wait)
         time.sleep(wait)
