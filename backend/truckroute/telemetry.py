@@ -16,6 +16,7 @@ from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import SpanProcessor
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 
@@ -26,6 +27,15 @@ class DefaultTraceId(logging.Filter):
         if not hasattr(record, "otelTraceID"):
             record.otelTraceID = "-"
         return True
+
+
+class LogSpans(SpanProcessor):
+    # hosted (vercel) there's no jaeger, but the platform keeps the logs. this writes one
+    # line per finished span (tomtom call, weather batch, ...) with how long it took, so
+    # the slow part of a request can still be found. on with LOG_SPANS=1
+    def on_end(self, span):
+        ms = (span.end_time - span.start_time) / 1e6
+        logging.getLogger("planner.spans").info("span %s %.0f ms", span.name, ms)
 
 
 def name_and_hide_key(span, request):
@@ -41,6 +51,8 @@ def setup():
     provider = TracerProvider(resource=Resource.create({"service.name": "truck-weather-router"}))
     if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    if os.environ.get("LOG_SPANS") == "1":
+        provider.add_span_processor(LogSpans())
     trace.set_tracer_provider(provider)
 
     DjangoInstrumentor().instrument()

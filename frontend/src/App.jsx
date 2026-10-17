@@ -117,20 +117,22 @@ function App() {
       })
   }
 
-  // play button: moves the slider ~3 forecast hours per second until the truck arrives
-  // (it used to keep going to 48h after the trip was over)
+  // play button: moves the slider until the truck arrives (it used to keep going to 48h
+  // after the trip was over). speed: 1 forecast hour per second, faster for long trips so
+  // the whole trip never takes more than ~20 s (a 12 h trip = 12 s, 48 h = 20 s)
   const endHourRef = useRef(48)
   useEffect(() => {
     if (!playing) return
     let last = performance.now()
     let raf
     const tick = (now) => {
-      // move by the real time since the last frame (dt seconds) x 3 forecast hours per
-      // second, so the speed is the same on a 60 Hz and a 120 Hz screen.
+      // move by the real time since the last frame (dt seconds) x hours per second, so
+      // the speed is the same on a 60 Hz and a 120 Hz screen.
       // first frame's timestamp can be a bit before `last`, don't go backwards below 0
       const dt = Math.max(0, now - last) / 1000
       last = now
-      setHour((h) => Math.min(h + dt * 3, endHourRef.current))
+      const hoursPerSecond = Math.max(1, endHourRef.current / 20)
+      setHour((h) => Math.min(h + dt * hoursPerSecond, endHourRef.current))
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)

@@ -121,6 +121,7 @@ def _get_routes(points, weight_lb, depart, alternatives, span):
         if res.status_code != 429:
             break
         span.add_event("tomtom 429, retrying")
+        logger.warning("tomtom 429, retrying in %.1fs", wait)
         time.sleep(wait)
         res = requests.get(TOMTOM_URL + coord_str + "/json", params=params, headers=HEADERS, timeout=25)
     # MAP_MATCHING_FAILURE = point isn't near any road (found it in the traces, via points
@@ -208,6 +209,7 @@ def _get_weather(points, start, end, span):
         for wait in (1, 3):
             if res.status_code != 429:
                 break
+            logger.warning("open-meteo 429, retrying in %ds", wait)
             time.sleep(wait)
             res = requests.get(WEATHER_URL, params=params, timeout=30)
         res.raise_for_status()
