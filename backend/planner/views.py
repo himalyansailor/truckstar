@@ -8,8 +8,11 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from . import services
+from .clients import WeatherBusy
 
 logger = logging.getLogger(__name__)
+
+BUSY_MESSAGE = "the weather service (Open-Meteo) is busy right now, try again in a minute"
 
 
 def parse_time(s):
@@ -100,6 +103,9 @@ def plan(request):
     except ValueError as e:
         # no route / place not found
         return JsonResponse({"error": str(e)}, status=422)
+    except WeatherBusy as e:
+        logger.warning("weather api failed: %s", e)
+        return JsonResponse({"error": BUSY_MESSAGE}, status=503)
     except requests.RequestException as e:
         logger.warning("external api failed: %s", e)
         return JsonResponse({"error": "routing or weather service failed, try again"}, status=502)
@@ -128,6 +134,9 @@ def heatmap(request):
     started = time.monotonic()
     try:
         result = services.build_heatmap(lines, depart, weight, rows)
+    except WeatherBusy as e:
+        logger.warning("weather api failed: %s", e)
+        return JsonResponse({"error": BUSY_MESSAGE}, status=503)
     except requests.RequestException as e:
         logger.warning("weather api failed: %s", e)
         return JsonResponse({"error": "weather service failed"}, status=502)

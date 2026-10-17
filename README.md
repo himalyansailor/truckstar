@@ -26,7 +26,7 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 export TOMTOM_API_KEY=<your key>
 python manage.py runserver                 # http://localhost:8000
-python manage.py test planner              # 9 tests, no network needed
+python manage.py test planner              # 11 tests, no network needed
 ```
 
 ```
@@ -69,7 +69,7 @@ backend/
     views.py             API layer: validate the request, call services, return JSON + status codes
     services.py          business logic: checkpoints + ETAs, risk rules, ranking, 3rd route, heatmap grid, place matching
     clients.py           external APIs (the "data layer", there's no db): TomTom, Photon, Open-Meteo, caching, retries
-    tests.py             risk boundaries, load rules, ranking, checkpoint spacing, place matching, heatmap input checks
+    tests.py             risk boundaries, load rules, ranking, checkpoint spacing, place matching, heatmap input checks, weather retries
 docker-compose.yml       Jaeger for local tracing
 frontend/src/
   App.jsx                state + requests (quick plan, full plan, heatmaps), play loop, selection
@@ -96,14 +96,14 @@ All JSON. Errors are `{"error": "..."}`.
 | `POST /api/heatmap/` | `depart_at`, `weight`, `lines` (route checkpoints), `rows` (1 = ±15 mi, 2 = ±30 mi) | grid points + risk 0–1 for each of 49 hours |
 | `GET /api/places/?q=` | at least 2 characters | up to 6 matching towns / cities (US + India) |
 
-Status codes: `400` bad input, `422` place not found / no truck route, `502` an outside API failed.
+Status codes: `400` bad input, `422` place not found / no truck route, `502` an outside API failed, `503` Open-Meteo still busy after 3 tries.
 
 ## How it works
 
 1. **Places.** Photon, filtered to the US and India and to towns / cities. A picked suggestion is used as is. Typed text takes the exact name if there is one, otherwise the biggest place, so typos land on the city ("Chenai" → Chennai, "Denvr" → Denver). Without this, typos silently went abroad ("Chenai" → Belgium, "Calcutta" → Ohio).
 2. **Routes.** TomTom `travelMode=truck` with the load weight (so it avoids roads with lower weight limits), traffic for the departure time, `maxAlternatives=2`. When there aren't 3 different roads (mountains), the missing route goes through a via point pushed sideways off the midpoint (rejected if >1.5× slower or a duplicate). All TomTom calls run in parallel.
 3. **Checkpoints + ETA.** TomTom gives the time at each turn instruction; I spread it over the points in between by length, then put a checkpoint every 10/25/50 mi with its interpolated position and ETA.
-4. **Weather.** Open-Meteo hourly wind, gusts, rain (+ showers) and snow, many points per request (batches of 25, 8 in parallel). Each checkpoint uses the hour nearest its ETA.
+4. **Weather.** Open-Meteo hourly wind, gusts, rain (+ showers) and snow, many points per request (batches of 10, 8 in parallel). Busy / rate-limited / slow answers (429, 5xx, >15 s) are retried twice, after 1 s and 3 s, so a plan stays under Vercel's 60 s limit. Each checkpoint uses the hour nearest its ETA.
 5. **Risk.** `get_risk()` in `services.py`: wind, rain and snow each get a level from the requirement's table, the checkpoint takes the worst, then the load rules. The requirement's ranges overlap at the edges (0.25 is both Moderate and High), I made the lower number inclusive (0.25 = High). A stretch between two checkpoints gets the worse of its two ends.
 6. **Recommendation.** Sort by No Travel miles, Severe miles, High miles, average risk, time. No Travel isn't in the requirement's list; I put it first because it's worse than Severe.
 7. **Heatmap.** For the selected route only, loaded when you select it: points along the route and on each side, 49 hours of forecast in one go, so the slider never calls the server. Drawn on a custom canvas layer (leaflet.heat adds overlapping points together, calm weather looked red). The slider blends between the two nearest hours.
@@ -147,6 +147,7 @@ Status codes: `400` bad input, `422` place not found / no truck route, `502` an 
 | What you see | Why | What the app does / what to do |
 |---|---|---|
 | Heatmap says "Couldn't load … Retry" | Open-Meteo free limit (~600 lookups/min, 5,000/h, 10,000/day). A new trip is ~160–210 lookups with the ±15 mi corridor, ~215–300 with ±30 mi (checkpoints ~70 + one route's heatmap) | Backend retries after 1 s and 3 s. Routes and risk still show. Wait a minute and press Retry, or use the ±15 mi corridor |
+| "the weather service (Open-Meteo) is busy right now" (503) | Open-Meteo's free API is overloaded or very slow (seen: 503s, 25 points taking 15 s instead of 1 s). Not caused by the hosting, happens locally too | Retried 3 times first. Wait a minute and try again; trips already looked up still load from the cache |
 | "routing or weather service failed, try again" | TomTom or Open-Meteo returned an error, or the TomTom key is missing / wrong | TomTom 429s are retried after 0.5 s and 1.5 s. Check `TOMTOM_API_KEY` |
 | First plan takes 10–20 s | TomTom's alternatives calculation is slow and varies (measured 6–31 s for the same request) | First route shows after ~4 s anyway; repeat searches are cached |
 | "no truck route found" / "couldn't find …" (422) | No truck road between the places, or the place isn't in the US / India | Pick a place from the suggestions |

@@ -1,5 +1,9 @@
+from unittest import mock
+
+import requests
 from django.test import SimpleTestCase
 
+from planner.clients import WeatherBusy, fetch_weather
 from planner.services import best_place, get_risk, route_summary, sort_key, distance_miles, points_every_n_miles
 
 
@@ -71,3 +75,26 @@ class HeatmapInputTest(SimpleTestCase):
             body = {"depart_at": "2026-10-17T10:00:00Z", "weight": 38000, "lines": lines}
             r = self.client.post("/api/heatmap/", body, content_type="application/json")
             self.assertEqual(r.status_code, 400, lines)
+
+
+class WeatherRetryTest(SimpleTestCase):
+    # fake open meteo answers, no network
+
+    def answer(self, status):
+        r = mock.Mock(ok=status == 200, status_code=status)
+        r.json.return_value = {"hourly": {}}
+        return r
+
+    @mock.patch("planner.clients.time.sleep")
+    @mock.patch("planner.clients.requests.get")
+    def test_busy_then_ok(self, get, sleep):
+        get.side_effect = [self.answer(503), requests.Timeout(), self.answer(200)]
+        self.assertEqual(fetch_weather({}), {"hourly": {}})
+        self.assertEqual(get.call_count, 3)
+
+    @mock.patch("planner.clients.time.sleep")
+    @mock.patch("planner.clients.requests.get")
+    def test_gives_up_after_3_tries(self, get, sleep):
+        get.side_effect = [self.answer(503), self.answer(429), self.answer(503)]
+        with self.assertRaises(WeatherBusy):
+            fetch_weather({})

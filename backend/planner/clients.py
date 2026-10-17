@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
+class WeatherBusy(requests.RequestException):
+    # open meteo kept failing (busy / rate limited / too slow) after the retries
+    pass
+
+
 def in_parallel(fn, items, workers=8):
     # run fn for each item in threads. passes the tracing context into the threads,
     # otherwise their spans don't show up under the request in jaeger
@@ -168,6 +173,27 @@ def _get_routes(points, weight_lb, depart, alternatives, span):
     return routes
 
 
+def fetch_weather(params):
+    # open meteo's free api fails now and then: 429 = our per-minute / per-day limit,
+    # 502-504 = it's overloaded, or it's just very slow. wait a bit and try again, 3 tries.
+    # worst case 15 + 1 + 15 + 3 + 15 = 49 s, so a plan (+ ~7 s tomtom) stays under
+    # vercel's 60 s function limit
+    for wait in (1, 3, None):
+        try:
+            res = requests.get(WEATHER_URL, params=params, timeout=15)
+            if res.ok:
+                return res.json()
+            if res.status_code not in (429, 500, 502, 503, 504):
+                res.raise_for_status()  # a real error (bad request), retrying won't help
+            problem = "returned " + str(res.status_code)
+        except requests.Timeout:
+            problem = "timed out"
+        if wait is None:
+            raise WeatherBusy("open-meteo " + problem + " 3 times")
+        logger.warning("open-meteo %s, retrying in %ds", problem, wait)
+        time.sleep(wait)
+
+
 def get_weather(points, start, end):
     # hourly weather for every point from start to end (list in the same order as points)
     with tracer.start_as_current_span("weather") as span:
@@ -203,17 +229,7 @@ def _get_weather(points, start, end, span):
             "start_hour": start.strftime("%Y-%m-%dT%H:00"),
             "end_hour": end.strftime("%Y-%m-%dT%H:00"),
         }
-        res = requests.get(WEATHER_URL, params=params, timeout=30)
-        # open meteo's free limit is per minute / hour, a burst (3 heatmaps at once) can hit
-        # 429. wait a bit and try again before giving up
-        for wait in (1, 3):
-            if res.status_code != 429:
-                break
-            logger.warning("open-meteo 429, retrying in %ds", wait)
-            time.sleep(wait)
-            res = requests.get(WEATHER_URL, params=params, timeout=30)
-        res.raise_for_status()
-        data = res.json()
+        data = fetch_weather(params)
         if isinstance(data, dict):  # if only 1 point it doesnt return a list
             data = [data]
         out = []
@@ -228,9 +244,10 @@ def _get_weather(points, start, end, span):
             })
         return out
 
-    # open meteo lets you send many points in one request. big batches (100) were
-    # timing out, 25 per request in parallel is a lot faster
-    batches = [missing[i:i + 25] for i in range(0, len(missing), 25)]
+    # open meteo lets you send many points in one request, but it answers a big request
+    # slower, a lot slower when it's busy (25 points: ~1 s normally, 15 s when busy).
+    # 10 per request in parallel keeps each one inside the 15 s timeout (fetch_weather)
+    batches = [missing[i:i + 10] for i in range(0, len(missing), 10)]
     results = in_parallel(fetch, batches)
 
     new = {}
