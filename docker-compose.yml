@@ -1,0 +1,8 @@
+# local tracing: jaeger ui on http://localhost:16686, takes OTLP traces on :4318
+# run the backend with OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+services:
+  jaeger:
+    image: jaegertracing/jaeger:2.9.0
+    ports:
+      - "16686:16686"
+      - "4318:4318"
