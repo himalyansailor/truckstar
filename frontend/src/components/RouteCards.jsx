@@ -12,6 +12,8 @@ function SkeletonCard() {
   )
 }
 
+// one route in the sidebar: distance, time, arrival, a bar of miles per risk level, and the
+// recommended badge + reason. click selects the route
 function RouteCard({ r, plan, partial, selected, onSelect }) {
   const s = r.summary
   const totalMiles = r.checkpoints[r.checkpoints.length - 1].mile
@@ -50,6 +52,8 @@ function RouteCard({ r, plan, partial, selected, onSelect }) {
   )
 }
 
+// the sidebar list: which places the plan used, a card per route, and grey skeleton cards
+// for the routes still loading
 function RouteCards({ plan, partial, loading, selected, onSelect }) {
   const routes = plan ? plan.routes : []
   const skeletons = loading ? Math.max(0, 3 - routes.length) : 0

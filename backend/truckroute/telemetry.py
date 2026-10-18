@@ -48,6 +48,9 @@ def name_and_hide_key(span, request):
 
 
 def setup():
+    # called once at startup (manage.py, wsgi.py): traces for every django request and
+    # every outgoing `requests` call, trace id in the log records. traces are only sent
+    # when OTEL_EXPORTER_OTLP_ENDPOINT is set; LOG_SPANS=1 also writes span times to the log
     provider = TracerProvider(resource=Resource.create({"service.name": "truck-weather-router"}))
     if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))

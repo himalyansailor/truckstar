@@ -155,11 +155,27 @@ const RouteLines = memo(function RouteLines({ plan, selected, onSelect, onCheckp
               eventHandlers={select}
               zIndexOffset={isSelected ? 1000 : 0}
             />
+            {/* other routes' checkpoints: small and faded, drawn with their own line so the
+                selected route stays on top. click = select that route at that checkpoint */}
+            {!isSelected &&
+              r.checkpoints.map((c, i) => (
+                <CircleMarker
+                  key={'cp' + r.id + '-' + i}
+                  center={[c.lat, c.lon]}
+                  radius={2.5}
+                  pathOptions={{ color: 'white', weight: 1, fillColor: RISK_COLORS[c.risk], fillOpacity: 0.6, opacity: 0.6 }}
+                  eventHandlers={{ click: () => onCheckpointClick(r.id, i) }}
+                >
+                  <Tooltip direction="top" offset={[0, -4]}>
+                    {r.label} · mile {Math.round(c.mile)} · {formatTime(c.eta)} · <b>{c.risk_label}</b>
+                  </Tooltip>
+                </CircleMarker>
+              ))}
           </Fragment>
         )
       })}
 
-      {/* checkpoints only on the selected route, small so the line colour still shows */}
+      {/* selected route's checkpoints last, on top of everything. small so the line colour still shows */}
       {selectedRoute.checkpoints.map((c, i) => (
         <CircleMarker
           key={selectedRoute.id + '-' + i}
@@ -178,6 +194,8 @@ const RouteLines = memo(function RouteLines({ plan, selected, onSelect, onCheckp
   )
 })
 
+// the map: tiles, heatmap, route lines + checkpoints, the ring on the selected checkpoint and
+// the truck. starts over the US, zooms to the routes when a plan arrives
 function RouteMap({ plan, selected, onSelect, onCheckpointClick, heat, hour, showHeat, truckRoute, truckTime, checkpoint }) {
   return (
     <MapContainer center={[39.5, -98.5]} zoom={4} style={{ height: '100%' }} preferCanvas={true}>

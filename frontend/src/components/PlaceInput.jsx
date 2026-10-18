@@ -32,11 +32,13 @@ function PlaceInput({ value, onChange }) {
     return () => clearTimeout(timer)
   }, [value.text, value.place])
 
+  // a suggestion was chosen: use its exact place and close the list
   function pick(p) {
     onChange({ text: p.name, place: p })
     setOpen(false)
   }
 
+  // arrow keys move through the list, enter picks, escape closes
   function onKeyDown(e) {
     if (!open || suggestions.length === 0) return
     if (e.key === 'ArrowDown') {

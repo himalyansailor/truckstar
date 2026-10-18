@@ -7,6 +7,7 @@ const CORRIDOR_NOTES = {
   2: 'Shows weather up to ~30 mi either side (~66% more lookups, ~145-230 per route). Wider view, but the free weather API has a per-minute limit: planning a few new trips quickly can hit it, then the heatmap shows Retry. Risk levels and routes are not affected either way.',
 }
 
+// the heatmap width select (±15 / ±30 mi) with the note on what each costs
 function CorridorPicker({ corridor, setCorridor }) {
   return (
     <div className="corridor">
@@ -22,7 +23,8 @@ function CorridorPicker({ corridor, setCorridor }) {
   )
 }
 
-// 0-48h slider for the heatmap
+// box at the bottom of the map: 0-48h slider, play button, heatmap on / off and corridor width.
+// while the heatmap loads it says so; if it failed, the error and a Retry button
 function TimeSlider({
   heat,
   error,
@@ -86,7 +88,7 @@ function TimeSlider({
           }}
           style={{ flex: 1 }}
         />
-        <span style={{ width: 170 }}>
+        <span style={{ width: 215 }}>
           <b>+{Math.floor(hour)}h</b> {sliderTime}
           {arrived && <span className="arrived"> · arrived</span>}
         </span>

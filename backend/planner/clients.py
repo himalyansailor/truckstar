@@ -42,6 +42,7 @@ def in_parallel(fn, items, workers=8):
     ctx = otel_context.get_current()
 
     def run(item):
+        # runs in a worker thread: attach the request's trace context, call fn, detach
         token = otel_context.attach(ctx)
         try:
             return fn(item)
@@ -100,6 +101,8 @@ def get_routes(points, weight_lb, depart, alternatives=True):
 
 
 def _get_routes(points, weight_lb, depart, alternatives, span):
+    # the tomtom calculateRoute call behind get_routes: cache lookup, request (+ retry on
+    # 429), errors without the key in them, then each route as coords + seconds per piece
     coord_str = ":".join([str(p[0]) + "," + str(p[1]) for p in points])
     params = {
         "key": TOMTOM_API_KEY,
@@ -208,6 +211,9 @@ def get_weather(points, start, end):
 
 
 def _get_weather(points, start, end, span):
+    # get_weather's work: snap points to grid cells, take what's cached, fetch the rest
+    # from open meteo in batches in parallel, cache them, return one entry per point:
+    # {"wind": [...], "gust": [...], "rain": [...], "snow": [...]}, one value per hour
     start = start.replace(minute=0, second=0, microsecond=0)
     # always get at least 49h (what the heatmap asks for) so the plan and heatmap
     # ask for the same window and share the cache
@@ -219,6 +225,7 @@ def _get_weather(points, start, end, span):
     cells = [(round(p[0], 1), round(p[1], 1)) for p in points]
 
     def cache_key(c):
+        # one cache entry per grid cell + forecast window
         return "wx:" + str(c[0]) + ":" + str(c[1]) + ":" + start.strftime("%Y%m%d%H") + ":" + str(hours)
 
     unique = list(set(cells))
@@ -226,6 +233,7 @@ def _get_weather(points, start, end, span):
     missing = [c for c in unique if cache_key(c) not in found]
 
     def fetch(batch):
+        # one open meteo request for up to 10 cells -> their hourly values, same order
         params = {
             "latitude": ",".join([str(c[0]) for c in batch]),
             "longitude": ",".join([str(c[1]) for c in batch]),

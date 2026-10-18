@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import PlaceInput from './PlaceInput'
+import { TIMEZONE } from '../constants'
 
+// default departure: the next full hour, in the format a datetime-local input wants
 function nextHour() {
   const d = new Date(Date.now() + 60 * 60 * 1000)
   d.setMinutes(0, 0, 0)
@@ -8,21 +10,28 @@ function nextHour() {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
 
-// one click trips. denver -> salt lake city is I-80 through the wyoming wind corridor
-// (where the heavy load rules matter), the other two are mountain / monsoon routes in india
+// the trip filled in at the start: I-80 through the wyoming wind corridor, where the heavy
+// load rules matter
+const DEFAULT_TRIP = ['Denver, Colorado', 'Salt Lake City, Utah']
+
+// one click trips, each picked for a different kind of weather: [from, to, what to look for]
 const EXAMPLES = [
-  ['Denver, Colorado', 'Salt Lake City, Utah'],
-  ['Chennai, Tamil Nadu', 'Kanyakumari, Tamil Nadu'],
-  ['Shimla, Himachal Pradesh', 'Leh, Ladakh'],
+  ['Seattle, Washington', 'Spokane, Washington', 'I-90 over Snoqualmie Pass: snow'],
+  ['Sacramento, California', 'Reno, Nevada', 'I-80 over Donner Pass: snow'],
+  ['Shimla, Himachal Pradesh', 'Leh, Ladakh', 'Himalayan passes above 4,000 m: snow, wind'],
+  ['Chicago, Illinois', 'Minneapolis, Minnesota', 'I-94 across the Midwest: wind, rain'],
+  ['Chennai, Tamil Nadu', 'Kanyakumari, Tamil Nadu', 'Tamil Nadu coast: monsoon rain'],
 ]
 
+// the trip form: from / to, departure, load, checkpoint spacing, and one-click example trips
 function TripForm({ onSubmit, loading }) {
-  const [origin, setOrigin] = useState({ text: EXAMPLES[0][0], place: null })
-  const [destination, setDestination] = useState({ text: EXAMPLES[0][1], place: null })
+  const [origin, setOrigin] = useState({ text: DEFAULT_TRIP[0], place: null })
+  const [destination, setDestination] = useState({ text: DEFAULT_TRIP[1], place: null })
   const [departTime, setDepartTime] = useState(nextHour())
   const [weight, setWeight] = useState(38000)
   const [interval, setInterval] = useState(25)
 
+  // sends the trip to App in the shape /api/plan/ expects
   function submit(from, to) {
     onSubmit({
       // the picked suggestion (exact coordinates) or just the text
@@ -34,6 +43,7 @@ function TripForm({ onSubmit, loading }) {
     })
   }
 
+  // the Find Safest Route button (no page reload)
   function handleSubmit(e) {
     e.preventDefault()
     submit(origin, destination)
@@ -56,7 +66,7 @@ function TripForm({ onSubmit, loading }) {
       <label>To</label>
       <PlaceInput value={destination} onChange={setDestination} />
 
-      <label>Departure</label>
+      <label>Departure ({TIMEZONE})</label>
       <input type="datetime-local" value={departTime} onChange={(e) => setDepartTime(e.target.value)} required />
 
       <div style={{ display: 'flex', gap: 10 }}>
@@ -80,7 +90,7 @@ function TripForm({ onSubmit, loading }) {
       <div className="examples">
         Try:{' '}
         {EXAMPLES.map((ex) => (
-          <button key={ex[0]} type="button" disabled={loading} onClick={() => tryExample(ex)}>
+          <button key={ex[0] + ex[1]} type="button" title={ex[2]} disabled={loading} onClick={() => tryExample(ex)}>
             {ex[0].split(',')[0]} → {ex[1].split(',')[0]}
           </button>
         ))}

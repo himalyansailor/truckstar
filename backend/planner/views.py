@@ -35,10 +35,12 @@ def over_limit(request, name):
 
 
 def too_many():
+    # the answer when over_limit says no
     return JsonResponse({"error": "too many requests, wait a minute and try again"}, status=429)
 
 
 def parse_time(s):
+    # ISO time from the frontend ("2026-10-18T08:00:00.000Z") -> aware datetime, utc if no zone
     t = datetime.fromisoformat(s.replace("Z", "+00:00"))
     if t.tzinfo is None:
         t = t.replace(tzinfo=timezone.utc)
@@ -95,6 +97,9 @@ def places(request):
 
 @csrf_exempt
 def plan(request):
+    # POST /api/plan/  {origin, destination, depart_at, weight, interval_mi, quick?}
+    # -> 200 the plan (services.plan_trip), 400 bad input, 422 place / route not found,
+    #    429 over the rate limit, 502 an outside api failed, 503 weather service busy
     if request.method != "POST":
         return JsonResponse({"error": "use POST"}, status=405)
     if over_limit(request, "plan"):
@@ -144,6 +149,9 @@ def plan(request):
 
 @csrf_exempt
 def heatmap(request):
+    # POST /api/heatmap/  {depart_at, weight, lines: [[[lat, lon], ...]], rows: 1 or 2}
+    # -> 200 {start, spacing_mi, points, values} (services.build_heatmap), 400 bad input,
+    #    429 over the rate limit, 502 / 503 weather service failed / busy
     if request.method != "POST":
         return JsonResponse({"error": "use POST"}, status=405)
     if over_limit(request, "heatmap"):

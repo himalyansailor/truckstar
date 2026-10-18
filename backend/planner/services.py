@@ -115,55 +115,41 @@ def points_every_n_miles(coords, miles_so_far, secs_so_far, n):
 # risk rules (from the requirement)
 # ---------------------------------------------------------------
 
+# where each level starts: Moderate, High, Severe, No Travel (below the first = Low).
+# same numbers as the requirement's table
+THRESHOLDS = {
+    "wind": [25, 35, 45, 55],  # mph
+    "rain": [0.10, 0.25, 0.50, 1.00],  # in/hr
+    "snow": [0.5, 1.0, 2.0, 3.0],  # in/hr
+}
+# the requirement's ranges share their edges ("0.10–0.25", "0.25–0.50"), so the lower number
+# starts the level: 0.25 in/hr is High. except No Travel for rain and snow, written as
+# ">1.00" and ">3.0": 1.00 in/hr is still Severe. wind is "≥55 mph", so 55 is No Travel
+STRICT_TOP = {"rain", "snow"}
+# load rules: a heavy load moves wind one level up. wind level -> above this weight (lb)
+# 45–54 mph (Severe) + >30,000 lb -> No Travel, 35–44 mph (High) + >40,000 lb -> Severe
+HEAVY_LOAD = {3: 30000, 2: 40000}
+
+
+def level(condition, value):
+    # how many of the 4 thresholds the value has reached = 0 low .. 4 no travel
+    *lower, top = THRESHOLDS[condition]
+    reached_top = value > top if condition in STRICT_TOP else value >= top
+    return sum(value >= t for t in lower) + reached_top
+
+
 def get_risk(wind, rain, snow, weight):
-    # weight in lb, same as the requirement
-    # 0 low, 1 moderate, 2 high, 3 severe, 4 no travel
-    # NOTE: the requirement's ranges overlap (0.10-0.25 and 0.25-0.50) so I made lower bound inclusive
-    wind_risk = 0
-    if wind >= 55:
-        wind_risk = 4
-    elif wind >= 45:
-        wind_risk = 3
-    elif wind >= 35:
-        wind_risk = 2
-    elif wind >= 25:
-        wind_risk = 1
-
-    rain_risk = 0
-    if rain > 1.0:
-        rain_risk = 4
-    elif rain >= 0.5:
-        rain_risk = 3
-    elif rain >= 0.25:
-        rain_risk = 2
-    elif rain >= 0.1:
-        rain_risk = 1
-
-    snow_risk = 0
-    if snow > 3.0:
-        snow_risk = 4
-    elif snow >= 2.0:
-        snow_risk = 3
-    elif snow >= 1.0:
-        snow_risk = 2
-    elif snow >= 0.5:
-        snow_risk = 1
-
-    # load rules
-    if wind >= 45 and wind < 55 and weight > 30000:
-        wind_risk = 4
-    if wind >= 35 and wind < 45 and weight > 40000:
-        wind_risk = 3
+    # weight in lb, same as the requirement. returns (level 0-4, reasons)
+    values = {"wind": wind, "rain": rain, "snow": snow}
+    levels = {c: level(c, v) for c, v in values.items()}
+    if weight > HEAVY_LOAD.get(levels["wind"], float("inf")):
+        levels["wind"] += 1
 
     reasons = []
-    if wind_risk > 0:
-        reasons.append("wind " + str(round(wind)) + " mph")
-    if rain_risk > 0:
-        reasons.append("rain " + str(round(rain, 2)) + " in/hr")
-    if snow_risk > 0:
-        reasons.append("snow " + str(round(snow, 2)) + " in/hr")
-
-    return max(wind_risk, rain_risk, snow_risk), reasons
+    for c, v in values.items():
+        if levels[c] > 0:
+            reasons.append(c + " " + (str(round(v)) + " mph" if c == "wind" else str(round(v, 2)) + " in/hr"))
+    return max(levels.values()), reasons
 
 
 def smooth_score(wind, rain, snow, weight):
@@ -179,7 +165,7 @@ def smooth_score(wind, rain, snow, weight):
             if v < steps[i + 1]:
                 return i + (v - steps[i]) / (steps[i + 1] - steps[i])
         return 4
-    s = max(f(wind, [0, 25, 35, 45, 55]), f(rain, [0, 0.1, 0.25, 0.5, 1.0]), f(snow, [0, 0.5, 1, 2, 3]))
+    s = max(f(v, [0] + THRESHOLDS[c]) for c, v in (("wind", wind), ("rain", rain), ("snow", snow)))
     # never below the real level, so the heavy load rules (which f doesn't know) still show
     risk, _ = get_risk(wind, rain, snow, weight)
     return max(s, risk)
@@ -219,22 +205,37 @@ def sort_key(route):
     return (s["no_travel_miles"], s["severe_miles"], s["high_miles"], s["avg_risk"], route["duration_hr"])
 
 
+def hours_text(hours):
+    # 2.42 -> "2h 25m", 0.5 -> "30 min"
+    mins = round(abs(hours) * 60)
+    return str(mins) + " min" if mins < 60 else str(mins // 60) + "h " + str(mins % 60) + "m"
+
+
 def why_message(ranked):
+    # why the first route won against the next one, and what it costs in time. the ranking
+    # is the requirement's order exactly, so a route can win on a small avg risk difference
+    # and still be hours longer; saying the time makes that trade-off visible to the driver
+    # ("Lower average risk than Route A (0.14 vs 0.28), 4h 25m longer")
     if len(ranked) < 2:
         return "Only one route found."
-    best = ranked[0]
-    s1 = best["summary"]
-    s2 = ranked[1]["summary"]
+    best, other = ranked[0], ranked[1]
+    s1, s2 = best["summary"], other["summary"]
+    name = other["label"]
     if s1["no_travel_miles"] < s2["no_travel_miles"]:
-        return "Avoids " + str(round(s2["no_travel_miles"] - s1["no_travel_miles"])) + " mi of No Travel conditions."
-    if s1["severe_miles"] < s2["severe_miles"]:
-        return str(round(s2["severe_miles"] - s1["severe_miles"])) + " fewer Severe miles than next best."
-    if s1["high_miles"] < s2["high_miles"]:
-        return str(round(s2["high_miles"] - s1["high_miles"])) + " fewer High risk miles than next best."
-    if s1["avg_risk"] < s2["avg_risk"]:
-        return "Lower average risk than the others."
-    mins = round((ranked[1]["duration_hr"] - best["duration_hr"]) * 60)
-    return "Weather is about the same, this one is " + str(mins) + " min faster."
+        reason = "Avoids " + str(round(s2["no_travel_miles"] - s1["no_travel_miles"])) + " mi of No Travel conditions on " + name
+    elif s1["severe_miles"] < s2["severe_miles"]:
+        reason = str(round(s2["severe_miles"] - s1["severe_miles"])) + " fewer Severe miles than " + name
+    elif s1["high_miles"] < s2["high_miles"]:
+        reason = str(round(s2["high_miles"] - s1["high_miles"])) + " fewer High risk miles than " + name
+    elif s1["avg_risk"] < s2["avg_risk"]:
+        reason = "Lower average risk than " + name + " (" + str(s1["avg_risk"]) + " vs " + str(s2["avg_risk"]) + ")"
+    else:
+        reason = "Same weather as " + name + " (avg risk " + str(s1["avg_risk"]) + ")"
+
+    diff = best["duration_hr"] - other["duration_hr"]
+    if abs(diff) < 1 / 60:
+        return reason + ", same time."
+    return reason + ", " + hours_text(diff) + (" longer." if diff > 0 else " faster.")
 
 
 # ---------------------------------------------------------------
@@ -253,6 +254,7 @@ def rank_places(text, places):
     typed = text.split(",")[0].strip().lower()
 
     def key(p):
+        # (not exact name, size rank): exact names sort first, then cities, towns, ...
         exact = p["name"].split(",")[0].strip().lower() == typed
         return (not exact, PLACE_RANK.get(p["type"], 5))
 
@@ -260,11 +262,13 @@ def rank_places(text, places):
 
 
 def best_place(text, places):
+    # the place used for typed text: the top of rank_places, or None if nothing matched
     ranked = rank_places(text, places)
     return ranked[0] if ranked else None
 
 
 def suggest_places(text):
+    # the dropdown under the from / to fields: up to 6 places, best first
     return rank_places(text, clients.search_places(text))[:6]
 
 
@@ -331,6 +335,14 @@ def find_three_routes(a, b, weight, depart):
 
 
 def plan_trip(origin_in, dest_in, depart, weight, interval, quick=False):
+    # the whole plan for /api/plan/:
+    # origin_in / dest_in = typed text or a picked place {name, lat, lon}, depart = datetime
+    # (utc), weight = lb, interval = miles between checkpoints (10 / 25 / 50),
+    # quick = only tomtom's main route (shown first while the full plan is still running).
+    # 1. find both places  2. get the routes  3. checkpoints + ETA along each route
+    # 4. weather for all checkpoints in one go  5. risk per checkpoint, summary per route
+    # 6. rank the routes, recommended = first. raises ValueError if a place or route
+    # isn't found (-> 422 in the view)
     origin, dest = clients.in_parallel(resolve_place, [origin_in, dest_in])
     if origin is None:
         raise ValueError("couldn't find \"" + str(origin_in) + "\" (US or India), pick a place from the suggestions")

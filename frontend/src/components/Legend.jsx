@@ -11,6 +11,8 @@ const RANGES = [
   ['≥ 55', '> 1.00', '> 3'],
 ]
 
+// box on the map with the risk table, the load rules and what the colours mean.
+// open at the start, click the title to fold it to a row of coloured dots
 function Legend() {
   const [open, setOpen] = useState(true)
 

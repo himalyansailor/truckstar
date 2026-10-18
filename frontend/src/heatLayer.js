@@ -21,11 +21,13 @@ function colorFor(v) {
 }
 
 const HeatCanvas = L.Layer.extend({
+  // opts.radiusMi = how wide each point's circle is, in miles
   initialize(opts) {
     this._pts = []
     this._radiusMi = opts?.radiusMi || 20
   },
 
+  // leaflet calls this when the layer is added: make the canvas, redraw on pan / resize
   onAdd(map) {
     this._map = map
     this._canvas = L.DomUtil.create('canvas', 'heat-canvas leaflet-zoom-hide')
@@ -35,16 +37,19 @@ const HeatCanvas = L.Layer.extend({
     this._reset()
   },
 
+  // leaflet calls this when the layer is removed
   onRemove(map) {
     L.DomUtil.remove(this._canvas)
     map.off('moveend resize', this._reset, this)
   },
 
+  // new values ([[lat, lon, 0..1], ...], e.g. when the slider moves) -> redraw
   setData(pts) {
     this._pts = pts
     if (this._map) this._draw()
   },
 
+  // after a pan or resize: move the canvas back over the visible map, resize, redraw
   _reset() {
     const map = this._map
     const size = map.getSize()
@@ -54,6 +59,7 @@ const HeatCanvas = L.Layer.extend({
     this._draw()
   },
 
+  // paint every point as a soft circle in its risk colour
   _draw() {
     const map = this._map
     const ctx = this._canvas.getContext('2d')

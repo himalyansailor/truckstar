@@ -8,6 +8,8 @@ import Legend from './components/Legend'
 import { API_URL } from './constants'
 import './App.css'
 
+// POST json to the backend, returns the parsed answer. a non-2xx answer throws with the
+// backend's error message, so callers can show it as is
 async function postJson(path, body) {
   const res = await fetch(API_URL + path, {
     method: 'POST',
@@ -37,6 +39,8 @@ function heatKey(route, rows) {
   return route.label + ':' + route.distance_mi + ':' + rows
 }
 
+// the whole page: holds the plan, the selected route, the slider hour and the heatmaps,
+// and passes them down to the form, the cards and the map
 function App() {
   const [plan, setPlan] = useState(null)
   const [partial, setPartial] = useState(false) // only the first route so far
@@ -56,6 +60,8 @@ function App() {
   const heatRequested = useRef(new Set())
   const lastForm = useRef(null) // for the heatmap retry button
 
+  // the form's submit: clears the old trip, then asks for the quick and the full plan at
+  // once (see below). requestId makes answers from an older search get ignored
   async function planTrip(form) {
     const id = ++requestId.current
     lastForm.current = form
@@ -192,6 +198,7 @@ function App() {
     if (playing && arrived) setPlaying(false)
   }, [playing, arrived])
 
+  // ▶ / ❚❚ button. after arriving it starts the trip over
   function togglePlay() {
     if (!playing && arrived) setHour(0) // play again after arriving = start over
     setPlaying(!playing)

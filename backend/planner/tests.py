@@ -5,7 +5,8 @@ from django.core.cache import cache
 from django.test import SimpleTestCase
 
 from planner.clients import WeatherBusy, fetch_weather
-from planner.services import best_place, get_risk, route_summary, sort_key, distance_miles, points_every_n_miles
+from planner.services import (best_place, get_risk, route_summary, sort_key, distance_miles, points_every_n_miles,
+                               why_message)
 
 
 class RiskTest(SimpleTestCase):
@@ -21,6 +22,8 @@ class RiskTest(SimpleTestCase):
         self.assertEqual(get_risk(0, 1.0, 0, 1000)[0], 3)
         self.assertEqual(get_risk(0, 1.01, 0, 1000)[0], 4)
         self.assertEqual(get_risk(0, 0, 3.5, 1000)[0], 4)
+        self.assertEqual(get_risk(0, 0, 3.0, 1000)[0], 3)  # ">3.0" for No Travel, so 3.0 is Severe
+        self.assertEqual(get_risk(0, 0.1, 0, 1000)[0], 1)
 
     def test_load_rules(self):
         self.assertEqual(get_risk(48, 0, 0, 30001)[0], 4)
@@ -39,6 +42,37 @@ class RiskTest(SimpleTestCase):
         pts = points_every_n_miles([[0, 0], [0, 1]], [0, d], [0, 3600], 25)
         self.assertEqual([round(p[0]) for p in pts], [0, 25, 50, 69])
 
+
+def make_route(label, hours, avg, high=0, severe=0):
+    return {"label": label, "duration_hr": hours, "summary": {
+        "no_travel_miles": 0, "severe_miles": severe, "high_miles": high, "avg_risk": avg}}
+
+
+class RankingTest(SimpleTestCase):
+    # the requirement's order exactly: severe miles, high miles, avg risk, time
+
+    def rank(self, *routes):
+        return sorted(routes, key=sort_key)
+
+    def test_lower_avg_risk_wins_even_if_slower(self):
+        # real case: 4.4 h longer, 0.14 vs 0.28, no High / Severe on either. rule 3 before rule 4
+        a, b = make_route("Route A", 12.39, 0.28), make_route("Route B", 16.8, 0.14)
+        ranked = self.rank(a, b)
+        self.assertEqual(ranked[0], b)
+        self.assertEqual(why_message(ranked), "Lower average risk than Route A (0.14 vs 0.28), 4h 25m longer.")
+
+    def test_same_weather_faster_wins(self):
+        a, b = make_route("Route A", 8, 0.2), make_route("Route B", 7.5, 0.2)
+        ranked = self.rank(a, b)
+        self.assertEqual(ranked[0], b)
+        self.assertEqual(why_message(ranked), "Same weather as Route A (avg risk 0.2), 30 min faster.")
+
+    def test_high_miles_before_avg_risk_and_time(self):
+        # 5 more High miles loses even when it's 3 h faster with a lower avg risk
+        a, b = make_route("Route A", 7, 0.3, high=25), make_route("Route B", 10, 0.35, high=20)
+        ranked = self.rank(a, b)
+        self.assertEqual(ranked[0], b)
+        self.assertEqual(why_message(ranked), "5 fewer High risk miles than Route A, 3h 0m longer.")
 
 class PlaceTest(SimpleTestCase):
 
